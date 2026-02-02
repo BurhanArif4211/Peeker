@@ -1,0 +1,15 @@
+{
+  "name": "peeker_dc_bot",
+  "version": "0.0.1",
+  "description": "A discord bot which allows to track prices of products and services on the internet.",
+  "license": "ISC",
+  "author": "B Arif",
+  "type": "commonjs",
+  "main": "bot.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "dependencies": {
+    "discord.js": "^14.25.1"
+  }
+}
