@@ -1,14 +1,14 @@
 {
-  "name": "discord-tracker-bot",
-  "version": "1.0.0",
-  "description": "Modular Discord tracking bot",
-  "main": "src/index.js",
+  "name": "peeker_dc_bot",
+  "version": "0.0.1",
+  "description": "A discord bot which allows to track prices of products and services on the internet.",
+  "license": "ISC",
+  "author": "B Arif",
+  "main": "bot.js",
   "scripts": {
     "start": "node src/index.js",
     "dev": "nodemon src/index.js",
-    "migrate": "node src/database/migrate.js",
-    "lint": "eslint src/",
-    "test": "jest"
+    "setup-db": "node -e \"require('./src/database/connection').getInstance().initialize()\""
   },
   "dependencies": {
     "discord.js": "^14.14.1",
@@ -16,16 +16,9 @@
     "sqlite": "^5.1.1",
     "axios": "^1.6.0",
     "node-cron": "^3.0.3",
-    "validator": "^13.11.0",
-    "winston": "^3.11.0",
-    "dotenv": "^16.3.1",
-    "ajv": "^8.12.0",
-    "rate-limiter-flexible": "",
-    "cheerio": "^1.0.0-rc.12"
+    "dotenv": "^16.3.1"
   },
   "devDependencies": {
-    "nodemon": "^3.0.1",
-    "eslint": "^8.54.0",
-    "jest": "^29.7.0"
+    "nodemon": "^3.0.1"
   }
 }

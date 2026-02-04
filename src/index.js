@@ -1,12 +1,12 @@
 // src/index.js
 require('dotenv').config();
-const { Client, GatewayIntentBits,REST,Routes, SlashCommandBuilder, EmbedBuilder } = require('discord.js');
+const { Client, GatewayIntentBits, REST, Routes, SlashCommandBuilder, EmbedBuilder } = require('discord.js');
 const Database = require('./database/connection');
 const CommandParser = require('./commands/parser');
 const JobManager = require('./scheduler/jobManager');
 const logger = require('./utils/logger');
 
-class SeekerBot {
+class TrackerBot {
     constructor() {
         this.client = new Client({
             intents: [
@@ -17,12 +17,14 @@ class SeekerBot {
             ]
         });
 
-        this.db = Database.getInstance();
+        this.db = null;
         this.parser = null;
         this.scheduler = null;
         this.commands = this.createCommands();
+        
         this.setupEventHandlers();
     }
+
     createCommands() {
         return [
             new SlashCommandBuilder()
@@ -67,17 +69,21 @@ class SeekerBot {
             logger.info('Starting Tracker Bot...');
             
             // Initialize database
-            await this.db.initialize();
+            const dbInstance = Database.getInstance();
+            this.db = await dbInstance.initialize();
             
             // Initialize parser
-            this.parser = new CommandParser(this.db.db);
+            this.parser = new CommandParser(this.db);
+            
+            // Initialize Discord client
+            await this.client.login(process.env.ONI_SECRET_TOKEN);
+            
+            // Register slash commands
+            await this.registerSlashCommands();
             
             // Initialize job scheduler
-            this.scheduler = new JobManager(this.db.db);
+            this.scheduler = new JobManager(this.db, this.client);
             await this.scheduler.initialize();
-            
-            // Login to Discord
-            await this.client.login(process.env.ONI_SECRET_TOKEN);
             
             logger.info('Tracker Bot started successfully');
             
@@ -85,25 +91,6 @@ class SeekerBot {
             logger.error('Failed to start bot:', error);
             process.exit(1);
         }
-    }
-
-    setupEventHandlers() {
-        this.client.once('clientReady', () => {
-            logger.info(`Logged in as ${this.client.user.tag}`);
-            this.registerSlashCommands();
-        });
-
-        this.client.on('guildCreate', async (guild) => {
-            await this.handleGuildJoin(guild);
-        });
-
-        this.client.on('guildDelete', async (guild) => {
-            await this.handleGuildLeave(guild);
-        });
-
-        this.client.on('interactionCreate', async (interaction) => {
-            await this.handleInteraction(interaction);
-        });
     }
 
     async registerSlashCommands() {
@@ -123,39 +110,52 @@ class SeekerBot {
         }
     }
 
+    setupEventHandlers() {
+        this.client.once('clientReady', () => {
+            logger.info(`Logged in as ${this.client.user.tag}!`);
+            this.client.user.setActivity('/help', { type: 'WATCHING' });
+        });
+
+        this.client.on('guildCreate', async (guild) => {
+            await this.handleGuildJoin(guild);
+        });
+
+        this.client.on('interactionCreate', async (interaction) => {
+            await this.handleInteraction(interaction);
+        });
+
+        this.client.on('error', (error) => {
+            logger.error('Discord client error:', error);
+        });
+    }
+
     async handleGuildJoin(guild) {
-        logger.info(`Joined guild: ${guild.name} (${guild.id})`);
+        logger.info(`Joined new guild: ${guild.name} (${guild.id})`);
         
-        await this.db.db.run(`
-            INSERT OR REPLACE INTO guilds 
-            (guild_id, guild_name, owner_id, member_count, icon_hash)
-            VALUES (?, ?, ?, ?, ?)
-        `, [
-            guild.id,
-            guild.name,
-            guild.ownerId,
-            guild.memberCount,
-            guild.icon
-        ]);
-        
-        // Store channels
-        for (const channel of guild.channels.cache.values()) {
-            if (channel.isTextBased()) {
-                await this.db.db.run(`
-                    INSERT OR REPLACE INTO channels 
-                    (channel_id, guild_id, channel_name, channel_type)
-                    VALUES (?, ?, ?, ?)
-                `, [
-                    channel.id,
-                    guild.id,
-                    channel.name,
-                    channel.type
-                ]);
+        try {
+            // Store guild info
+            await this.db.run(`
+                INSERT OR REPLACE INTO guilds (guildId, guildName, ownerId)
+                VALUES (?, ?, ?)
+            `, [guild.id, guild.name, guild.ownerId]);
+            
+            // Store channels
+            for (const channel of guild.channels.cache.values()) {
+                if (channel.isTextBased()) {
+                    await this.db.run(`
+                        INSERT OR REPLACE INTO channels (channelId, guildId, channelName, channelType)
+                        VALUES (?, ?, ?, ?)
+                    `, [channel.id, guild.id, channel.name, channel.type]);
+                }
             }
+            
+            logger.info(`Stored info for guild: ${guild.name}`);
+        } catch (error) {
+            logger.error(`Error storing guild info for ${guild.id}:`, error);
         }
     }
 
-        async handleInteraction(interaction) {
+    async handleInteraction(interaction) {
         if (!interaction.isCommand()) return;
         
         try {
@@ -196,7 +196,7 @@ class SeekerBot {
         logger.info(`Track command: ${input} by ${userId} in ${guildId}`);
         
         try {
-            // Parse 
+            // Parse input
             const result = await this.parser.parse(input, 'steam');
             
             if (!result.success) {
@@ -207,7 +207,7 @@ class SeekerBot {
             }
 
             // Check if already tracking in this guild
-            const existing = await this.db.db.get(`
+            const existing = await this.db.get(`
                 SELECT ti.itemId, ti.displayName 
                 FROM tracked_items ti
                 JOIN tracking_types tt ON ti.trackingTypeId = tt.typeId
@@ -217,7 +217,6 @@ class SeekerBot {
                 AND ti.isActive = TRUE
             `, [guildId, result.identifier]);
             
-            
             if (existing) {
                 await interaction.editReply({
                     content: `⚠️ Already tracking **${existing.displayName || result.identifier}** (ID: ${existing.itemId})`
@@ -226,12 +225,12 @@ class SeekerBot {
             }
 
             // Check guild limits
-            const typeInfo = await this.db.db.get(
+            const typeInfo = await this.db.get(
                 'SELECT typeId, maxItemsPerGuild FROM tracking_types WHERE typeName = ?',
                 ['steam']
             );
 
-            const guildCount = await this.db.db.get(`
+            const guildCount = await this.db.get(`
                 SELECT COUNT(*) as count
                 FROM tracked_items ti
                 JOIN tracking_types tt ON ti.trackingTypeId = tt.typeId
@@ -248,7 +247,7 @@ class SeekerBot {
             }
 
             // Get default check interval
-            const defaultInterval = await this.db.db.get(
+            const defaultInterval = await this.db.get(
                 'SELECT defaultCheckInterval FROM tracking_types WHERE typeName = ?',
                 ['steam']
             );
@@ -257,7 +256,7 @@ class SeekerBot {
             const nextCheck = new Date(Date.now() + 10000);
 
             // Create tracking entry
-            const dbResult = await this.db.db.run(`
+            const dbResult = await this.db.run(`
                 INSERT INTO tracked_items 
                 (trackingTypeId, guildId, channelId, createdByUserId,
                  identifier, displayName, metadata, nextCheck)
@@ -293,7 +292,7 @@ class SeekerBot {
         const guildId = interaction.guildId;
         
         try {
-            const items = await this.db.db.all(`
+            const items = await this.db.all(`
                 SELECT 
                     ti.itemId,
                     ti.displayName,
@@ -367,7 +366,7 @@ class SeekerBot {
         
         try {
             // Verify the item belongs to this guild and user has permission
-            const item = await this.db.db.get(`
+            const item = await this.db.get(`
                 SELECT ti.*, g.ownerId
                 FROM tracked_items ti
                 JOIN guilds g ON ti.guildId = g.guildId
@@ -393,7 +392,7 @@ class SeekerBot {
             }
 
             // Deactivate the tracking
-            await this.db.db.run(`
+            await this.db.run(`
                 UPDATE tracked_items 
                 SET isActive = FALSE, updatedAt = CURRENT_TIMESTAMP
                 WHERE itemId = ?
@@ -419,7 +418,7 @@ class SeekerBot {
         
         try {
             // Get the item
-            const item = await this.db.db.get(`
+            const item = await this.db.get(`
                 SELECT ti.*
                 FROM tracked_items ti
                 WHERE ti.itemId = ? AND ti.guildId = ? AND ti.isActive = TRUE
@@ -433,7 +432,7 @@ class SeekerBot {
             }
 
             // Force immediate check by updating nextCheck to now
-            await this.db.db.run(`
+            await this.db.run(`
                 UPDATE tracked_items 
                 SET nextCheck = datetime('now')
                 WHERE itemId = ?
@@ -487,124 +486,20 @@ class SeekerBot {
 
         await interaction.reply({ embeds: [embed], ephemeral: true });
     }
-    // async handleInteraction(interaction) {
-    //     if (!interaction.isCommand()) return;
-        
-    //     try {
-    //         switch (interaction.commandName) {
-    //             case 'track':
-    //                 await this.handleTrackCommand(interaction);
-    //                 break;
-    //             case 'list':
-    //                 await this.handleListCommand(interaction);
-    //                 break;
-    //             case 'untrack':
-    //                 await this.handleUntrackCommand(interaction);
-    //                 break;
-    //             case 'status':
-    //                 await this.handleStatusCommand(interaction);
-    //                 break;
-    //         }
-    //     } catch (error) {
-    //         logger.error('Command handling error:', error);
-    //         await interaction.reply({
-    //             content: '❌ An error occurred while processing your command.',
-    //             ephemeral: true
-    //         });
-    //     }
-    // }
-
-    // async handleTrackCommand(interaction) {
-    //     await interaction.deferReply();
-        
-    //     const input = interaction.options.getString('url_or_identifier');
-    //     const userId = interaction.user.id;
-    //     const guildId = interaction.guildId;
-    //     const channelId = interaction.channelId;
-        
-    //     // Parse and validate input
-    //     const parsed = await this.parser.parseTrackCommand(
-    //         input, userId, guildId, channelId
-    //     );
-        
-    //     if (parsed.validationErrors.length > 0) {
-    //         await interaction.editReply({
-    //             content: `❌ **Validation Errors:**\n${parsed.validationErrors.map(e => `• ${e}`).join('\n')}`
-    //         });
-    //         return;
-    //     }
-        
-    //     // Check if already tracking
-    //     const existing = await this.db.db.get(`
-    //         SELECT item_id FROM tracked_items 
-    //         WHERE guild_id = ? 
-    //         AND tracking_type_id = (
-    //             SELECT type_id FROM tracking_types WHERE type_name = ?
-    //         )
-    //         AND identifier = ?
-    //         AND is_active = TRUE
-    //     `, [guildId, parsed.type, parsed.identifier]);
-        
-    //     if (existing) {
-    //         await interaction.editReply({
-    //             content: `⚠️ Already tracking this item! (ID: ${existing.item_id})`
-    //         });
-    //         return;
-    //     }
-        
-    //     // Create tracking entry
-    //     const typeInfo = await this.db.db.get(
-    //         'SELECT type_id, default_check_interval FROM tracking_types WHERE type_name = ?',
-    //         [parsed.type]
-    //     );
-        
-    //     const result = await this.db.db.run(`
-    //         INSERT INTO tracked_items 
-    //         (tracking_type_id, guild_id, channel_id, created_by_user_id,
-    //          identifier, display_name, metadata)
-    //         VALUES (?, ?, ?, ?, ?, ?, ?)
-    //     `, [
-    //         typeInfo.type_id,
-    //         guildId,
-    //         channelId,
-    //         userId,
-    //         parsed.identifier,
-    //         parsed.metadata.display_name || null,
-    //         JSON.stringify(parsed.metadata)
-    //     ]);
-        
-    //     // Audit log
-    //     await this.db.db.run(`
-    //         INSERT INTO audit_log 
-    //         (guild_id, user_id, action_type, resource_type, resource_id)
-    //         VALUES (?, ?, ?, ?, ?)
-    //     `, [
-    //         guildId,
-    //         userId,
-    //         'CREATE',
-    //         'tracked_item',
-    //         result.lastID.toString()
-    //     ]);
-        
-    //     await interaction.editReply({
-    //         content: `✅ **Now tracking!**\n` +
-    //                 `**Type:** ${parsed.type}\n` +
-    //                 `**Item:** ${parsed.identifier}\n` +
-    //                 `**ID:** ${result.lastID}\n` +
-    //                 `**Next check:** In ${typeInfo.default_check_interval / 60} minutes`
-    //     });
-    // }
 }
 
 // Start the bot
-const seeker = new SeekerBot();
-seeker.start().catch(console.error);
+const bot = new TrackerBot();
+bot.start().catch(console.error);
 
 // Graceful shutdown
 process.on('SIGTERM', async () => {
-    logger.info('Received SIGTERM, shutting down...');
-    if (seeker.scheduler) {
-        await seeker.scheduler.shutdown();
+    logger.info('Received SIGTERM, shutting down gracefully...');
+    if (bot.scheduler) {
+        await bot.scheduler.shutdown();
+    }
+    if (bot.client) {
+        bot.client.destroy();
     }
     process.exit(0);
 });
