@@ -34,7 +34,7 @@ class JobManager extends EventEmitter {
 
     async loadModules() {
         // Dynamically load tracking modules
-        const moduleNames = ['steam-tracker', 'stock-tracker', 'product-tracker'];
+        const moduleNames = ['steamTracker'/*, 'stock-tracker', 'product-tracker'*/];
         
         for (const moduleName of moduleNames) {
             try {
@@ -80,7 +80,7 @@ class JobManager extends EventEmitter {
 
     async processDueItems() {
         // Get items due for checking
-        const dueItems = await this.db.all(`
+        const dueItems = await this.db.db.all(`
             SELECT 
                 ti.*,
                 tt.type_name,
@@ -140,7 +140,7 @@ class JobManager extends EventEmitter {
             const change = this.calculateChange(lastValue, result);
             
             // Update database
-            await this.db.run(`
+            await this.db.db.run(`
                 UPDATE tracked_items 
                 SET 
                     last_checked = CURRENT_TIMESTAMP,
@@ -157,7 +157,7 @@ class JobManager extends EventEmitter {
             ]);
             
             // Save to history
-            await this.db.run(`
+            await this.db.db.run(`
                 INSERT INTO tracking_history (item_id, value, change_percentage)
                 VALUES (?, ?, ?)
             `, [
@@ -224,7 +224,7 @@ class JobManager extends EventEmitter {
         const maxErrors = 5;
         
         // Update error count
-        await this.db.run(`
+        await this.db.db.run(`
             UPDATE tracked_items 
             SET 
                 error_count = ?,
@@ -252,7 +252,7 @@ class JobManager extends EventEmitter {
 
     async resumePendingTrackings() {
         // Find items that were being processed when the bot shut down
-        const pendingItems = await this.db.all(`
+        const pendingItems = await this.db.db.all(`
             SELECT * FROM tracked_items 
             WHERE is_active = TRUE 
             AND last_checked < datetime('now', '-1 hour')
@@ -263,7 +263,7 @@ class JobManager extends EventEmitter {
             logger.info(`Resuming ${pendingItems.length} pending trackings`);
             
             // Reset their next_check time
-            await this.db.run(`
+            await this.db.db.run(`
                 UPDATE tracked_items 
                 SET next_check = CURRENT_TIMESTAMP
                 WHERE item_id IN (${pendingItems.map(i => i.item_id).join(',')})
@@ -273,7 +273,7 @@ class JobManager extends EventEmitter {
 
     async cleanupOldData() {
         // Delete history older than 90 days
-        const result = await this.db.run(`
+        const result = await this.db.db.run(`
             DELETE FROM tracking_history 
             WHERE detected_at < datetime('now', '-90 days')
         `);
@@ -281,7 +281,7 @@ class JobManager extends EventEmitter {
         logger.info(`Cleaned up ${result.changes} old history records`);
         
         // Deactivate items with too many errors
-        await this.db.run(`
+        await this.db.db.run(`
             UPDATE tracked_items 
             SET is_active = FALSE 
             WHERE error_count >= 10 

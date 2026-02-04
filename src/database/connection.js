@@ -16,7 +16,7 @@ class Database {
         try {
             // Open database connection
             this.db = await open({
-                filename: path.join(process.cwd(), 'data', 'tracker.db'),
+                filename: path.join(process.cwd(), process.env.DATABASE_PATH),
                 driver: sqlite3.Database
             });
 
@@ -62,7 +62,7 @@ class Database {
             const statements = schema.split(';').filter(stmt => stmt.trim());
             
             for (const stmt of statements) {
-                await this.db.exec(stmt);
+                await this.db.exec(`${stmt};`);//add mission semi collon??s
             }
             
             await this.db.run(
