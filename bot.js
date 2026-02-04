@@ -13,7 +13,7 @@ const client = new Client({
 const commands = [
     {
         name: 'track',
-        description: 'track game price',
+        description: 'Track game price',
         options: [{
             name: 'url',
             description: 'Game url to check',
