@@ -338,7 +338,7 @@ class TrackerBot {
 
                 embed.addFields({
                     name: `${item.displayName || `Steam App ${item.identifier}`} (ID: ${item.itemId})`,
-                    value: `Status: ${status}\nLast Price: ${lastPrice}\nErrors: ${item.errorCount}`,
+                    value: `Status: ${status}\nLast Price: ${lastPrice}\n`,//Errors: ${item.errorCount}
                     inline: false
                 });
             }

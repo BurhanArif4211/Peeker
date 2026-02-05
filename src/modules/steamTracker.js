@@ -48,7 +48,7 @@ class SteamTracker {
             } else if (game.is_free) {
                 price = 0;
             }
-
+            
             return {
                 name: game.name,
                 price: price,

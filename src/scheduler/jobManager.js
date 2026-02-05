@@ -79,9 +79,9 @@ class JobManager {
             let result;
             if (item.typeName === 'steam') {
                 result = await SteamTracker.fetch({
-                    identifier: item.identifier,
-                    region: 'us'
+                    identifier: item.identifier
                 });
+                logger.info(result);
             } else {
                 throw new Error(`Unknown tracker type: ${item.typeName}`);
             }
@@ -185,7 +185,6 @@ class JobManager {
 
     async getDiscordChannel(channelId) {
         if (!this.client) return null;
-        
         try {
             return await this.client.channels.fetch(channelId);
         } catch (error) {
