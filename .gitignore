@@ -1,6 +1,6 @@
 # By bur
 data/
-
+package-lock.json
 # Logs
 logs
 *.log
